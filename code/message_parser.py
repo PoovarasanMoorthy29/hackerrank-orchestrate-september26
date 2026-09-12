@@ -14,8 +14,8 @@ class UserMessageUpdates:
     salary_amount_override: Optional[float] = None
     salary_date_override: Optional[date] = None
     seasonal_contract_ended: bool = False
+    unconfirmed_gig_income: bool = False
     rent_increase_percent: Optional[float] = None
-    pending_payouts_unconfirmed: List[str] = field(default_factory=list)
 
 class MessageParser:
     def __init__(self, messages_csv_path: str = "dataset/messages.csv"):
@@ -45,6 +45,10 @@ class MessageParser:
             if re.search(r'seasonal contract has ended', txt, re.IGNORECASE):
                 up.seasonal_contract_ended = True
 
+            # Unconfirmed gig payouts (QuickCrew, TaskLoop, etc.)
+            if re.search(r'payout is still pending|earnings shown.*can change|balance isn’t withdrawable|balance isn\'t withdrawable', txt, re.IGNORECASE):
+                up.unconfirmed_gig_income = True
+
             # Salary date override
             m_date = re.search(r'confirmed salary is now expected on\s+(\d{4}-\d{2}-\d{2})', txt, re.IGNORECASE)
             if m_date:
@@ -54,9 +58,7 @@ class MessageParser:
                     pass
 
             # Salary amount override
-            # Indonesian pattern: naik menjadi IDR 42750000 / IDR 17290000
             m_sal_idr = re.search(r'(?:naik menjadi|gaji pokok|gaji bulanan|gaji)*\s*(?:IDR|USD|EUR|ZAR|INR)\s*([\d\.\,]+)', txt, re.IGNORECASE)
-            # English pattern: increased to / reduced to / salary is / first salary will be ...
             m_sal_eng = re.search(r'(?:increased to|reduced to|salary is|first salary will be|monthly pay is|remaining confirmed monthly salary is)\s+(?:IDR|USD|EUR|ZAR|INR)?\s*([\d\.\,]+)', txt, re.IGNORECASE)
 
             if m_sal_eng:
