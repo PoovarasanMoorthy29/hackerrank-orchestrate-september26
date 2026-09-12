@@ -1,11 +1,11 @@
 """
-Payment Option Loader and Candidate Plan Generator.
+Payment Option Loader and Candidate Plan Generator with Spending Changes Support.
 """
 
 import csv
 from datetime import datetime, date, timedelta
-from typing import Dict, List, Optional, Tuple, Any
-from code.models import PurchaseRequest, FinancialProfile, PaymentOption, CandidatePlan, ScheduledPayment
+from typing import Dict, List, Optional, Tuple, Any, Set
+from code.models import PurchaseRequest, FinancialProfile, PaymentOption, CandidatePlan, ScheduledPayment, FinancialEvent
 from code.forecaster import CashFlowForecaster
 
 class PlanGenerator:
@@ -55,6 +55,67 @@ class PlanGenerator:
     def get_options_for_request(self, request_id: str) -> List[PaymentOption]:
         return self.options.get(request_id, [])
 
+    def _find_spending_change_combos(self, profile: FinancialProfile, events: List[FinancialEvent]) -> List[Tuple[str, List[Dict[str, Any]]]]:
+        """
+        Generates candidate spending change combinations (up to 3 changes).
+        Returns list of (spending_changes_str, spending_changes_list).
+        """
+        protected_cats = set(profile.expense_categories_to_protect)
+        willing_stop_cats = set(profile.expense_categories_user_is_willing_to_stop)
+        willing_reduce_cats = set(profile.expense_categories_user_is_willing_to_reduce)
+
+        stoppable_candidates: List[FinancialEvent] = []
+        reducible_candidates: List[FinancialEvent] = []
+
+        # Find latest flexible events
+        latest_events: Dict[Tuple[str, str], FinancialEvent] = {}
+        for e in events:
+            if e.direction == 'debit' and e.category not in protected_cats:
+                key = (e.category, e.description)
+                if key not in latest_events or e.settlement_date > latest_events[key].settlement_date:
+                    latest_events[key] = e
+
+        for e in latest_events.values():
+            cat = e.category
+            flex = e.flexibility.lower()
+
+            if flex == 'stoppable' or cat in willing_stop_cats:
+                stoppable_candidates.append(e)
+            
+            if flex in ['reducible', 'reducible_or_stoppable'] or cat in willing_reduce_cats:
+                if e.minimum_allowed_amount is not None and e.minimum_allowed_amount < e.amount:
+                    reducible_candidates.append(e)
+
+        combos: List[Tuple[str, List[Dict[str, Any]]]] = []
+        combos.append(("none", []))
+
+        # Single stop candidates
+        for se in stoppable_candidates:
+            sc = [{'type': 'stop', 'event_id': se.event_id, 'category': se.category}]
+            sc_str = f"stop:{se.event_id}"
+            combos.append((sc_str, sc))
+
+        # Single reduce candidates
+        for re in reducible_candidates:
+            new_amt_str = f"{re.minimum_allowed_amount:.2f}".rstrip('0').rstrip('.') if re.minimum_allowed_amount % 1 != 0 else f"{int(re.minimum_allowed_amount)}"
+            sc = [{'type': 'reduce_to', 'event_id': re.event_id, 'category': re.category, 'new_amount': re.minimum_allowed_amount}]
+            sc_str = f"reduce_to:{re.event_id}:{new_amt_str}"
+            combos.append((sc_str, sc))
+
+        # Double candidates (stop + reduce or stop + stop)
+        for se in stoppable_candidates:
+            for re in reducible_candidates:
+                if se.event_id != re.event_id:
+                    new_amt_str = f"{re.minimum_allowed_amount:.2f}".rstrip('0').rstrip('.') if re.minimum_allowed_amount % 1 != 0 else f"{int(re.minimum_allowed_amount)}"
+                    sc = [
+                        {'type': 'stop', 'event_id': se.event_id, 'category': se.category},
+                        {'type': 'reduce_to', 'event_id': re.event_id, 'category': re.category, 'new_amount': re.minimum_allowed_amount}
+                    ]
+                    sc_str = f"stop:{se.event_id}|reduce_to:{re.event_id}:{new_amt_str}"
+                    combos.append((sc_str, sc))
+
+        return combos
+
     def generate_candidate_plans(self,
                                  req: PurchaseRequest,
                                  profile: FinancialProfile,
@@ -65,29 +126,46 @@ class PlanGenerator:
         candidates: List[CandidatePlan] = []
         user_methods = set(profile.payment_methods_user_will_consider)
 
+        spending_combos = self._find_spending_change_combos(profile, forecaster.events)
+
         # 1. Full Payment on request_date
         if 'full_payment' in user_methods:
-            plan_str = f"{req.request_date.strftime('%Y-%m-%d')}:{req.requested_amount:.2f}".rstrip('0').rstrip('.')
-            # format amount neatly
             amt_str = f"{req.requested_amount:.2f}".rstrip('0').rstrip('.') if req.requested_amount % 1 != 0 else f"{int(req.requested_amount)}"
             plan_str = f"{req.request_date.strftime('%Y-%m-%d')}:{amt_str}"
-            
             payments = [ScheduledPayment(payment_date=req.request_date, amount=req.requested_amount)]
-            is_safe = forecaster.is_plan_safe(req.request_date, plan_payments=payments)
-            
-            aff_status = "affordable_now" if is_safe else "not_affordable"
-            candidates.append(CandidatePlan(
-                payment_method="full_payment",
-                payment_plan_str=plan_str,
-                payments=payments,
-                spending_changes_needed_str="none",
-                spending_changes=[],
-                earliest_date_for_full_payment=earliest_full_date_str if earliest_full_date_str else req.request_date.strftime('%Y-%m-%d'),
-                affordability_status=aff_status,
-                total_payable_amount=req.requested_amount,
-                is_safe=is_safe,
-                payment_option_id="000"
-            ))
+
+            for sc_str, sc_list in spending_combos:
+                is_safe = forecaster.is_plan_safe(req.request_date, plan_payments=payments, spending_changes=sc_list)
+                if is_safe:
+                    aff_status = "affordable_now" if sc_str == "none" else "affordable_with_plan"
+                    candidates.append(CandidatePlan(
+                        payment_method="full_payment",
+                        payment_plan_str=plan_str,
+                        payments=payments,
+                        spending_changes_needed_str=sc_str,
+                        spending_changes=sc_list,
+                        earliest_date_for_full_payment=earliest_full_date_str if earliest_full_date_str else req.request_date.strftime('%Y-%m-%d'),
+                        affordability_status=aff_status,
+                        total_payable_amount=req.requested_amount,
+                        is_safe=True,
+                        payment_option_id="000"
+                    ))
+                    if sc_str == "none":
+                        break # First priority without spending changes
+
+            if not candidates: # if unsafe even with spending changes
+                candidates.append(CandidatePlan(
+                    payment_method="full_payment",
+                    payment_plan_str=plan_str,
+                    payments=payments,
+                    spending_changes_needed_str="none",
+                    spending_changes=[],
+                    earliest_date_for_full_payment=earliest_full_date_str if earliest_full_date_str else req.request_date.strftime('%Y-%m-%d'),
+                    affordability_status="not_affordable",
+                    total_payable_amount=req.requested_amount,
+                    is_safe=False,
+                    payment_option_id="000"
+                ))
 
         # 2. Partial Payment
         if req.allows_partial_payment and ('partial_payment' in user_methods or 'full_payment' in user_methods):
@@ -122,11 +200,9 @@ class PlanGenerator:
             options = self.get_options_for_request(req.request_id)
             for opt in options:
                 if opt.payment_method == 'installments':
-                    # Check max_installment_months constraint
                     if profile.max_installment_months and opt.number_of_payments > profile.max_installment_months:
                         continue
 
-                    # Generate payment dates
                     payments: List[ScheduledPayment] = []
                     plan_parts: List[str] = []
                     curr_d = opt.first_payment_date
@@ -139,20 +215,24 @@ class PlanGenerator:
                         plan_parts.append(f"{pdate.strftime('%Y-%m-%d')}:{amt_str}")
 
                     plan_str = "|".join(plan_parts)
-                    is_safe = forecaster.is_plan_safe(req.request_date, plan_payments=payments)
 
-                    candidates.append(CandidatePlan(
-                        payment_method="installments",
-                        payment_plan_str=plan_str,
-                        payments=payments,
-                        spending_changes_needed_str="none",
-                        spending_changes=[],
-                        earliest_date_for_full_payment=earliest_full_date_str,
-                        affordability_status="affordable_with_plan" if is_safe else "not_affordable",
-                        total_payable_amount=opt.total_payable_amount,
-                        is_safe=is_safe,
-                        payment_option_id=opt.payment_option_id
-                    ))
+                    for sc_str, sc_list in spending_combos:
+                        is_safe = forecaster.is_plan_safe(req.request_date, plan_payments=payments, spending_changes=sc_list)
+                        if is_safe:
+                            candidates.append(CandidatePlan(
+                                payment_method="installments",
+                                payment_plan_str=plan_str,
+                                payments=payments,
+                                spending_changes_needed_str=sc_str,
+                                spending_changes=sc_list,
+                                earliest_date_for_full_payment=earliest_full_date_str,
+                                affordability_status="affordable_with_plan",
+                                total_payable_amount=opt.total_payable_amount,
+                                is_safe=True,
+                                payment_option_id=opt.payment_option_id
+                            ))
+                            if sc_str == "none":
+                                break
 
         # 4. Wait
         if 'full_payment' in user_methods and earliest_full_date_str:
