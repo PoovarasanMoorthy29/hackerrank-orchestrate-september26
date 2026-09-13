@@ -24,7 +24,7 @@ class PlanGenerator:
                     pamt = float(row['payment_amount'])
                     num_p = int(row['number_of_payments'])
                     fdate = datetime.strptime(row['first_payment_date'].strip(), "%Y-%m-%d").date()
-                    
+
                     freq_str = row['payment_frequency_days'].strip()
                     freq = int(freq_str) if freq_str and freq_str.isdigit() else 30
 
@@ -81,7 +81,7 @@ class PlanGenerator:
 
             if flex == 'stoppable' or cat in willing_stop_cats:
                 stoppable_candidates.append(e)
-            
+
             if flex in ['reducible', 'reducible_or_stoppable'] or cat in willing_reduce_cats:
                 if e.minimum_allowed_amount is not None and e.minimum_allowed_amount < e.amount:
                     reducible_candidates.append(e)
@@ -102,7 +102,7 @@ class PlanGenerator:
             sc_str = f"reduce_to:{re.event_id}:{new_amt_str}"
             combos.append((sc_str, sc))
 
-        # Double candidates (stop + reduce or stop + stop)
+        # Double candidates (stop + reduce)
         for se in stoppable_candidates:
             for re in reducible_candidates:
                 if se.event_id != re.event_id:
@@ -151,9 +151,9 @@ class PlanGenerator:
                         payment_option_id="000"
                     ))
                     if sc_str == "none":
-                        break # First priority without spending changes
+                        break
 
-            if not candidates: # if unsafe even with spending changes
+            if not candidates:
                 candidates.append(CandidatePlan(
                     payment_method="full_payment",
                     payment_plan_str=plan_str,
@@ -175,7 +175,7 @@ class PlanGenerator:
                     rem_amt = req.requested_amount - amount_safe_to_pay
                     amt1_str = f"{amount_safe_to_pay:.2f}".rstrip('0').rstrip('.') if amount_safe_to_pay % 1 != 0 else f"{int(amount_safe_to_pay)}"
                     amt2_str = f"{rem_amt:.2f}".rstrip('0').rstrip('.') if rem_amt % 1 != 0 else f"{int(rem_amt)}"
-                    
+
                     plan_str = f"{req.request_date.strftime('%Y-%m-%d')}:{amt1_str}|{earliest_full_date_str}:{amt2_str}"
                     payments = [
                         ScheduledPayment(payment_date=req.request_date, amount=amount_safe_to_pay),
@@ -210,7 +210,7 @@ class PlanGenerator:
                         pdate = curr_d + timedelta(days=i * opt.payment_frequency_days)
                         pamt = opt.payment_amount
                         payments.append(ScheduledPayment(payment_date=pdate, amount=pamt))
-                        
+
                         amt_str = f"{pamt:.2f}".rstrip('0').rstrip('.') if pamt % 1 != 0 else f"{int(pamt)}"
                         plan_parts.append(f"{pdate.strftime('%Y-%m-%d')}:{amt_str}")
 

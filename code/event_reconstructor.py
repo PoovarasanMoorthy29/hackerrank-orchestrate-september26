@@ -5,7 +5,7 @@ Normalizes, filters, converts currency, applies message/image overrides, handles
 
 import csv
 from datetime import datetime, date, timedelta
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Any
 from code.models import FinancialProfile, FinancialEvent
 from code.currency import CurrencyConverter
 from code.image_extractor import ImageExtractor
@@ -24,7 +24,7 @@ class EventReconstructor:
         self.message_parser = MessageParser(messages_csv_path)
         self.profiles: Dict[str, FinancialProfile] = {}
         self.user_events: Dict[str, List[FinancialEvent]] = {}
-        
+
         self._load_profiles(profiles_csv_path)
         self._load_events(events_csv_path)
 
@@ -58,28 +58,30 @@ class EventReconstructor:
         for uid, rows in raw_events_by_user.items():
             profile = self.profiles.get(uid)
             home_curr = profile.home_currency if profile else "USD"
+            msg_up = self.message_parser.get_updates_for_user(uid)
 
-            # 1. First pass: Identify superseded linked events
-            # If B links to A and B is settled/scheduled, A (if pending/estimate/failed) is superseded
+            # 1. Identify superseded linked events and message cancellations
             superseded_event_ids: Set[str] = set()
-            linked_map: Dict[str, str] = {} # B -> A
+            for eid in msg_up.event_cancellations:
+                superseded_event_ids.add(eid)
 
             for row in rows:
                 eid = row['event_id'].strip()
                 linked_id = row['linked_event_id'].strip()
                 status = row['status'].strip().lower()
+
                 if linked_id:
-                    linked_map[eid] = linked_id
-                    if status in ['settled', 'scheduled', 'pending']:
+                    # The newer linked record replaces/supersedes the earlier linked event
+                    if status in ['settled', 'scheduled', 'pending', 'cancelled', 'amended']:
                         superseded_event_ids.add(linked_id)
 
-            # 2. Build normalized events
+            # 2. Process and normalize active events
             parsed_events: List[FinancialEvent] = []
             for row in rows:
                 eid = row['event_id'].strip()
                 status = row['status'].strip().lower()
 
-                # Rule: Ignore failed, cancelled, unrealized, or superseded events
+                # Filter out cancelled, failed, unrealized, or superseded events
                 if status in ['failed', 'cancelled', 'unrealized'] or eid in superseded_event_ids:
                     continue
 
@@ -92,12 +94,19 @@ class EventReconstructor:
                 sdate_str = row['settlement_date'].strip()
                 sdate = datetime.strptime(sdate_str, "%Y-%m-%d").date() if sdate_str else edate
 
-                # Handle missing amounts via ImageExtractor
+                # Recover missing amounts via ImageExtractor
                 amt_str = row['amount'].strip()
                 if amt_str:
                     amt = float(amt_str)
                 else:
-                    amt = self.image_extractor.get_amount_for_event(eid)
+                    extracted = self.image_extractor.get_amount_for_event(eid)
+                    amt = extracted if extracted is not None else 0.0
+
+                # Apply message amendments if present for this event
+                if eid in msg_up.event_amendments:
+                    amd = msg_up.event_amendments[eid]
+                    if 'amount' in amd:
+                        amt = amd['amount']
 
                 amt_home = self.currency_converter.convert(amt, curr, home_curr, sdate)
                 flex = row['flexibility'].strip().lower() if row['flexibility'] else 'fixed'
