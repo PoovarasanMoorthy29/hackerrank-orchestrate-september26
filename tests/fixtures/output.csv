@@ -1,0 +1,5 @@
+request_id,amount_safe_to_pay,affordability_status,recommended_payment_method,payment_plan,earliest_date_for_full_payment,spending_changes_needed,decision_explanation
+req_fix_01,500,affordable_now,full_payment,2026-01-02:500,2026-01-02,none,"Pay USD 500 today. This leaves at least USD 1,000 available over the next 90 days."
+req_fix_02,2000,affordable_now,full_payment,2026-01-02:2000,2026-01-02,none,"Pay USD 2,000 today. This leaves at least USD 1,000 available over the next 90 days."
+req_fix_03,800,affordable_now,full_payment,2026-01-02:800,2026-01-02,none,Pay EUR 800 today. This leaves at least EUR 500 available over the next 90 days.
+req_fix_04,2500,not_affordable,not_recommended,none,,none,"Do not proceed with the EUR 10,000 request. Although EUR 2,500 is available today, the full amount cannot be completed safely within 90 days."

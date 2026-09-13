@@ -25,8 +25,13 @@ class EventReconstructor:
         self.profiles: Dict[str, FinancialProfile] = {}
         self.user_events: Dict[str, List[FinancialEvent]] = {}
 
+        self.unresolved_amount_event_ids_by_user: Dict[str, List[str]] = {}
         self._load_profiles(profiles_csv_path)
         self._load_events(events_csv_path)
+
+    @property
+    def unresolved_amount_event_ids(self) -> List[str]:
+        return [eid for eids in self.unresolved_amount_event_ids_by_user.values() for eid in eids]
 
     def _load_profiles(self, path: str):
         with open(path, 'r', encoding='utf-8') as f:
@@ -100,7 +105,21 @@ class EventReconstructor:
                     amt = float(amt_str)
                 else:
                     extracted = self.image_extractor.get_amount_for_event(eid)
-                    amt = extracted if extracted is not None else 0.0
+                    if extracted is not None:
+                        amt = extracted
+                    elif eid in msg_up.event_amendments and 'amount' in msg_up.event_amendments[eid]:
+                        amt = msg_up.event_amendments[eid]['amount']
+                    else:
+                        amt = None
+                        self.unresolved_amount_event_ids_by_user.setdefault(uid, []).append(eid)
+
+                # EXPLANATION OF SAFE FALLBACK (NO BLANK AS ZERO):
+                # When an event amount is missing from financial_events.csv and cannot be extracted from images or messages,
+                # we set amt = None and track the event ID in self.unresolved_amount_event_ids_by_user.
+                # Setting amt = None (and excluding such events from cash-flow calculations in the forecaster) guarantees
+                # that we do NOT treat a blank amount as 0.0. A 0.0 value would incorrectly register as zero cash impact,
+                # whereas treating it as unresolved (None) explicitly flags the missing data and prevents corrupting
+                # cash flow calculations with a fake $0.0 figure.
 
                 # Apply message amendments if present for this event
                 if eid in msg_up.event_amendments:
@@ -108,7 +127,14 @@ class EventReconstructor:
                     if 'amount' in amd:
                         amt = amd['amount']
 
-                amt_home = self.currency_converter.convert(amt, curr, home_curr, sdate)
+                if amt is not None:
+                    amt_home = self.currency_converter.convert(amt, curr, home_curr, sdate)
+                    if amt_home is None:
+                        # Exchange rate conversion failed for foreign currency event
+                        if eid not in self.unresolved_amount_event_ids_by_user.get(uid, []):
+                            self.unresolved_amount_event_ids_by_user.setdefault(uid, []).append(eid)
+                else:
+                    amt_home = None
                 flex = row['flexibility'].strip().lower() if row['flexibility'] else 'fixed'
                 min_allowed = float(row['minimum_allowed_amount']) if row['minimum_allowed_amount'].strip() else None
 
@@ -137,6 +163,9 @@ class EventReconstructor:
 
     def get_user_events(self, user_id: str) -> List[FinancialEvent]:
         return self.user_events.get(user_id, [])
+
+    def get_unresolved_event_ids_for_user(self, user_id: str) -> List[str]:
+        return list(self.unresolved_amount_event_ids_by_user.get(user_id, []))
 
     def get_message_updates(self, user_id: str) -> UserMessageUpdates:
         return self.message_parser.get_updates_for_user(user_id)

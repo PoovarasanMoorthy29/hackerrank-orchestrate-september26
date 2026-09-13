@@ -18,6 +18,24 @@ Read [`problem_statement.md`](./problem_statement.md) for the full task spec, in
 
 ---
 
+## Prerequisites & Setup
+
+Ensure Python 3.10+ and the `tesseract-ocr` system package are installed:
+
+```bash
+# Ubuntu / Debian
+sudo apt-get update && sudo apt-get install -y tesseract-ocr libtesseract-dev
+
+# macOS
+brew install tesseract
+```
+
+Install Python package dependencies:
+
+```bash
+pip install Pillow pytesseract easyocr
+```
+
 ## Quick Start
 
 Clone the repository and move into the project directory:
@@ -38,7 +56,7 @@ Your solution must:
 Run the starter Python entry point with:
 
 ```bash
-python3 code/main.py
+PYTHONPATH=. python3 code/main.py dataset/requests.csv output.csv
 ```
 
 After running your solution, confirm that `output.csv` exists in the repository root and contains the required columns and one row for every request.

@@ -2,7 +2,7 @@
 Deterministic Plan Validator enforcing all 10 challenge safety and contract rules.
 """
 
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Set
 from datetime import date
 from code.models import CandidatePlan, PurchaseRequest, FinancialProfile, ScheduledPayment
 

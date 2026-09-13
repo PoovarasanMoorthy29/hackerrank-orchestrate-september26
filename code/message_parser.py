@@ -118,8 +118,13 @@ Message: "{text}"
                         pass
 
             # 2. General Deterministic Structural Parsing
-            # Contract ends
-            if re.search(r'contract\s+(?:has\s+)?ended|contract\s+terminated|no\s+renewal', txt, re.IGNORECASE):
+            # Contract / Employment ends (supports English & Indonesian variations: contract ended, employment ended, kontrak musiman berakhir, etc.)
+            if re.search(
+                r'(?:seasonal\s+contract|contract|employment|kontrak\s+musiman|pekerjaan)\s*(?:has\s+)?(?:ended|concluded|terminated|berakhir|telah\s+berakhir)'
+                r'|no\s+off-season\s+income|no\s+renewal|last\s+day\s+was|belum\s+ada\s+pendapatan\s+di\s+luar\s+musim'
+                r'|employment\s+has\s+ended',
+                txt, re.IGNORECASE
+            ):
                 up.seasonal_contract_ended = True
 
             # Unconfirmed gig payouts / unwithdrawable balance / pending earnings
@@ -135,7 +140,16 @@ Message: "{text}"
                     pass
 
             # Salary amount override (supports English, Indonesian, EUR, USD, ZAR, INR, IDR)
-            m_sal = re.search(r'(?:gaji|salary|pay|monthly pay|reduced to|increased to|resumes|first salary)\s*(?:is|now|to|=|:)?\s*(?:IDR|USD|EUR|ZAR|INR|Rp|\$|€|₹)?\s*([\d\.\,]+)', txt, re.IGNORECASE)
+            # Require explicit currency or clear keyword within same clause/sentence
+            m_sal = re.search(
+                r'(?:gaji\s*(?:bulanan)?|salary|monthly\s+pay|base\s+salary|confirmed\s+salary|reduced\s+to|increased\s+to)\s*(?:is|now|to|=|:|\s+of)?\s*(?:IDR|USD|EUR|ZAR|INR|Rp|\$|€|₹)\s*([\d\.\,]+)',
+                txt, re.IGNORECASE
+            )
+            if not m_sal:
+                m_sal = re.search(
+                    r'(?:gaji|salary|monthly\s+pay)\s*(?:is|now|to|=|:)\s*([\d\.\,]+)',
+                    txt, re.IGNORECASE
+                )
             if m_sal:
                 amt_str = m_sal.group(1).replace(',', '')
                 try:

@@ -17,10 +17,23 @@ from code.plan_ranker import PlanRanker
 from code.explanation_generator import ExplanationGenerator
 
 def process_requests(requests_csv_path: str = "dataset/requests.csv",
-                     output_csv_path: str = "output.csv") -> List[Recommendation]:
+                     output_csv_path: str = "output.csv",
+                     profiles_csv: str = "dataset/financial_profiles.csv",
+                     events_csv: str = "dataset/financial_events.csv",
+                     exchange_rates_csv: str = "dataset/exchange_rates.csv",
+                     options_csv: str = "dataset/request_payment_options.csv",
+                     messages_csv: str = "dataset/messages.csv",
+                     images_csv: str = "dataset/images.csv",
+                     media_dir: str = "dataset/media/images") -> List[Recommendation]:
 
-    recon = EventReconstructor()
-    plan_gen = PlanGenerator()
+    recon = EventReconstructor(
+        events_csv_path=events_csv,
+        profiles_csv_path=profiles_csv,
+        exchange_rates_csv_path=exchange_rates_csv,
+        images_csv_path=images_csv,
+        messages_csv_path=messages_csv
+    )
+    plan_gen = PlanGenerator(options_csv_path=options_csv)
 
     # Load requests
     requests: List[PurchaseRequest] = []
@@ -57,7 +70,8 @@ def process_requests(requests_csv_path: str = "dataset/requests.csv",
         if not profile:
             continue
 
-        forecaster = CashFlowForecaster(profile, events, msg_updates)
+        unresolved_eids = recon.get_unresolved_event_ids_for_user(req.user_id)
+        forecaster = CashFlowForecaster(profile, events, msg_updates, unresolved_event_ids=unresolved_eids)
 
         # 1. Calculate amount_safe_to_pay
         amount_safe_to_pay = forecaster.calculate_amount_safe_to_pay(req.request_date, req.requested_amount)
@@ -85,7 +99,8 @@ def process_requests(requests_csv_path: str = "dataset/requests.csv",
             safe_pay_out = f"{safe_pay_val:.2f}".rstrip('0').rstrip('.')
 
         # 6. Generate decision explanation
-        explanation = ExplanationGenerator.generate_explanation(req, profile, best_plan, amount_safe_to_pay)
+        has_unresolved = bool(unresolved_eids or forecaster.estimated_unresolved_events or forecaster.has_uncertain_unresolved_expense)
+        explanation = ExplanationGenerator.generate_explanation(req, profile, best_plan, amount_safe_to_pay, has_unresolved_amounts=has_unresolved)
 
         rec = Recommendation(
             request_id=req.request_id,

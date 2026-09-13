@@ -1,0 +1,5 @@
+payment_option_id,request_id,payment_method,payment_amount,number_of_payments,first_payment_date,payment_frequency_days,financing_fee,total_payable_amount
+opt_1_1,req_fix_01,full_payment,500.0,1,2026-01-02,,0.0,500.0
+opt_2_1,req_fix_02,full_payment,2000.0,1,2026-01-02,,0.0,2000.0
+opt_3_1,req_fix_03,installments,200.0,4,2026-01-02,30,0.0,800.0
+opt_4_1,req_fix_04,full_payment,10000.0,1,2026-01-02,,0.0,10000.0

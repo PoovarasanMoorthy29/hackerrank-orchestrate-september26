@@ -8,6 +8,8 @@ class CurrencyConverter:
         self.rates: Dict[Tuple[str, str, str], float] = {}
         # Map (from_curr, to_curr) -> Sorted list of (rate_date, rate)
         self.pair_rates: Dict[Tuple[str, str], List[Tuple[date, float]]] = {}
+        # Track missing rate pairs when conversion cannot be performed
+        self.missing_rate_pairs: List[Tuple[str, str, date]] = []
         self._load_rates(exchange_rates_csv_path)
 
     def _load_rates(self, path: str):
@@ -69,12 +71,17 @@ class CurrencyConverter:
 
         return None
 
-    def convert(self, amount: float, from_curr: str, to_curr: str, target_date: date) -> float:
+    def convert(self, amount: Optional[float], from_curr: str, to_curr: str, target_date: date) -> Optional[float]:
+        if amount is None:
+            return None
         if from_curr == to_curr or amount == 0.0:
             return amount
 
         rate = self.get_exchange_rate(from_curr, to_curr, target_date)
         if rate is not None:
             return amount * rate
-        return amount
+        
+        # Missing exchange rate: record pair and return None (unresolved amount)
+        self.missing_rate_pairs.append((from_curr, to_curr, target_date))
+        return None
 

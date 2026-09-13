@@ -1,3 +1,4 @@
+
 """
 Payment Option Loader and Candidate Plan Generator with Spending Changes Support.
 """
@@ -83,7 +84,7 @@ class PlanGenerator:
                 stoppable_candidates.append(e)
 
             if flex in ['reducible', 'reducible_or_stoppable'] or cat in willing_reduce_cats:
-                if e.minimum_allowed_amount is not None and e.minimum_allowed_amount < e.amount:
+                if e.minimum_allowed_amount is not None and e.amount is not None and e.minimum_allowed_amount < e.amount:
                     reducible_candidates.append(e)
 
         combos: List[Tuple[str, List[Dict[str, Any]]]] = []
@@ -148,7 +149,7 @@ class PlanGenerator:
                         affordability_status=aff_status,
                         total_payable_amount=req.requested_amount,
                         is_safe=True,
-                        payment_option_id="000"
+                        payment_option_id=None
                     ))
                     if sc_str == "none":
                         break
@@ -164,7 +165,7 @@ class PlanGenerator:
                     affordability_status="not_affordable",
                     total_payable_amount=req.requested_amount,
                     is_safe=False,
-                    payment_option_id="000"
+                    payment_option_id=None
                 ))
 
         # 2. Partial Payment
@@ -192,7 +193,7 @@ class PlanGenerator:
                         affordability_status="affordable_with_plan",
                         total_payable_amount=req.requested_amount,
                         is_safe=is_safe,
-                        payment_option_id="001"
+                        payment_option_id=None
                     ))
 
         # 3. Installments from request_payment_options.csv
@@ -252,7 +253,7 @@ class PlanGenerator:
                     affordability_status="affordable_later",
                     total_payable_amount=req.requested_amount,
                     is_safe=is_safe,
-                    payment_option_id="002"
+                    payment_option_id=None
                 ))
 
         return candidates

@@ -1,0 +1,5 @@
+request_id,user_id,request_date,request_type,requested_amount,desired_completion_date,allows_partial_payment,request_text
+req_fix_01,user_fix1,2026-01-02,purchase,500.0,2026-01-10,FALSE,Buy new monitor
+req_fix_02,user_fix1,2026-01-02,purchase,2000.0,2026-01-10,TRUE,Buy laptop with partial payment allowed
+req_fix_03,user_fix2,2026-01-02,purchase,800.0,2026-04-10,FALSE,Buy phone with installments
+req_fix_04,user_fix2,2026-01-02,purchase,10000.0,2026-01-10,FALSE,Buy luxury car beyond budget

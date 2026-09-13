@@ -1,0 +1,2 @@
+message_id,user_id,related_event_id,timestamp,sender,message_text
+msg_01,user_fix1,,2026-01-02T10:00:00,employer,Your performance bonus of $500 will be paid on Jan 15.

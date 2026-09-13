@@ -1,0 +1,6 @@
+event_id,user_id,event_type,description,category,direction,amount,currency,event_date,settlement_date,status,linked_event_id,flexibility,minimum_allowed_amount
+e_sal_1,user_fix1,income,Monthly Salary,salary,credit,4000.0,USD,2026-01-01,2026-01-01,settled,,fixed,
+e_rent_1,user_fix1,expense,Monthly Rent,rent,debit,1200.0,USD,2026-01-05,2026-01-05,settled,,fixed,
+e_cloud_1,user_fix1,expense,Cloud Storage,cloud_storage,debit,50.0,USD,2026-01-10,2026-01-10,settled,,stoppable,
+e_sal_2,user_fix2,income,Salary EUR,salary,credit,2500.0,EUR,2026-01-01,2026-01-01,settled,,fixed,
+e_rent_2,user_fix2,expense,Rent EUR,rent,debit,800.0,EUR,2026-01-05,2026-01-05,settled,,fixed,

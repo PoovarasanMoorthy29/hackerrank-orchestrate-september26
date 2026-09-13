@@ -8,6 +8,7 @@ import csv
 import os
 import re
 import json
+import shutil
 from typing import Dict, Optional, Tuple, Any
 from PIL import Image, ImageOps
 
@@ -84,50 +85,190 @@ class ImageExtractor:
 
         return None
 
+    def _preprocess_image(self, image_path: str) -> Image.Image:
+        """
+        Preprocesses document PNG images (grayscale, contrast enhancement, binarization, optional upscaling)
+        to improve OCR accuracy on receipt and invoice documents.
+        """
+        with Image.open(image_path) as img:
+            img_gray = img.convert('L')
+            w, h = img_gray.size
+            if w < 1000 or h < 1000:
+                scale = max(2, int(1200 / max(min(w, h), 1)))
+                img_gray = img_gray.resize((w * scale, h * scale), Image.Resampling.LANCZOS)
+            img_contrast = ImageOps.autocontrast(img_gray)
+            threshold = 160
+            img_bin = img_contrast.point(lambda p: 255 if p > threshold else 0)
+            return img_bin
+
+    def _parse_amount_from_ocr_text(self, text: str) -> Optional[float]:
+        """
+        Extracts the most likely total or net pay amount from OCR text using keyword-anchored regex.
+        Prefers the largest or last matched 'total'-style line over incidental numbers.
+        """
+        if not text:
+            return None
+
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        
+        total_keywords_pattern = re.compile(
+            r'(?:total|net\s*pay|grand\s*total|amount\s*due|cash\s*paid|balance\s*due|payable|total\s*amount|subtotal|jumlah|gaji\s*bersih)\s*[:=]?\s*(?:USD|EUR|ZAR|INR|IDR|Rp|\$|€|₹)?\s*([\d,]+(?:\.\d{1,2})?|\d+)',
+            re.IGNORECASE
+        )
+
+        matched_amounts: List[Tuple[float, int]] = []
+
+        for idx, line in enumerate(lines):
+            m = total_keywords_pattern.search(line)
+            if m:
+                raw_str = m.group(1).replace(',', '')
+                try:
+                    val = float(raw_str)
+                    if val > 0.01:
+                        matched_amounts.append((val, idx))
+                except ValueError:
+                    pass
+
+        if matched_amounts:
+            best_amount = max(matched_amounts, key=lambda x: (x[0], x[1]))[0]
+            return best_amount
+
+        fallback_pattern = re.compile(
+            r'(?:USD|EUR|ZAR|INR|IDR|Rp|\$|€|₹)\s*([\d,]+(?:\.\d{1,2})?)'
+        )
+        candidates: List[float] = []
+        for line in lines:
+            if any(kw in line.lower() for kw in ['total', 'net', 'pay', 'amount', 'due', 'paid', 'subtotal', 'gaji', 'bersih']):
+                for m in fallback_pattern.finditer(line):
+                    num_str = m.group(1).replace(',', '')
+                    try:
+                        val = float(num_str)
+                        if val > 0.01:
+                            candidates.append(val)
+                    except ValueError:
+                        pass
+
+        if candidates:
+            return max(candidates)
+
+        return None
+
+    def _is_tesseract_available(self) -> bool:
+        """
+        Fast startup check to verify if Tesseract OCR binary is installed and executable.
+        Checks system PATH first (shutil.which('tesseract')), then local fallback path.
+        """
+        if shutil.which("tesseract"):
+            return True
+        
+        local_tess = os.path.expanduser('~/.local/usr/bin/tesseract')
+        if os.path.exists(local_tess) and os.access(local_tess, os.X_OK):
+            return True
+        
+        try:
+            import sys, site
+            user_site = site.getusersitepackages()
+            if user_site not in sys.path:
+                sys.path.append(user_site)
+            import pytesseract
+            _ = pytesseract.get_tesseract_version()
+            return True
+        except Exception:
+            return False
+
+    def _configure_pytesseract(self):
+        """
+        Configures pytesseract command and library paths cleanly.
+        If tesseract is found in system PATH, pytesseract defaults to system behavior.
+        Otherwise, if local sandbox fallback binary exists, configures custom paths.
+        """
+        try:
+            import sys, site
+            user_site = site.getusersitepackages()
+            if user_site not in sys.path:
+                sys.path.append(user_site)
+            import pytesseract
+
+            # If system PATH has tesseract, use system default
+            if shutil.which("tesseract"):
+                return
+
+            # Check local user fallback path
+            local_tess = os.path.expanduser('~/.local/usr/bin/tesseract')
+            if os.path.exists(local_tess):
+                pytesseract.pytesseract.tesseract_cmd = local_tess
+                lib_path = os.path.expanduser('~/.local/usr/lib/x86_64-linux-gnu')
+                if os.path.exists(lib_path):
+                    current_ld = os.environ.get('LD_LIBRARY_PATH', '')
+                    if lib_path not in current_ld:
+                        os.environ['LD_LIBRARY_PATH'] = lib_path + (':' + current_ld if current_ld else '')
+                tessdata_path = os.path.expanduser('~/.local/usr/share/tesseract-ocr/5/tessdata')
+                if os.path.exists(tessdata_path):
+                    os.environ['TESSDATA_PREFIX'] = tessdata_path
+        except Exception:
+            pass
+
     def _extract_amount_via_python_ocr(self, image_path: str) -> Optional[float]:
         """
-        Extracts monetary amounts from document PNG images in pure Python using image processing,
-        contour analysis, binarization, and structural line parsing.
+        Extracts monetary amounts from receipt/statement document images using local OCR and text parsing.
+        1. Cheap byte-scan pass.
+        2. Image preprocessing (grayscale, contrast, thresholding, upscaling).
+        3. OCR via pytesseract (with fast startup check), easyocr, or OCR text parsing.
+        4. Keyword-anchored regex amount extraction.
         """
         if not os.path.exists(image_path):
             return None
 
+        # 1. Cheap byte scan as first pass
         try:
-            # 1. Inspect raw binary strings for text embedded in PNG chunks if present
             with open(image_path, 'rb') as f:
                 raw_data = f.read()
-
             text_chunks = re.findall(rb'[\x20-\x7e]{4,}', raw_data)
-            all_strs = [c.decode('latin-1', errors='ignore') for c in text_chunks]
-
-            # Look for totals in metadata/chunks
-            for s in all_strs:
-                if any(kw in s.lower() for kw in ['total', 'net pay', 'amount', 'grand total', 'cash paid']):
-                    nums = re.findall(r'(\d{1,3}(?:[,\.]\d{3})*(?:\.\d{1,2})?)', s)
-                    for n in nums:
-                        try:
-                            val = float(n.replace(',', ''))
-                            if val > 0.1:
-                                return val
-                        except ValueError:
-                            pass
-
-            # 2. Structural document parser reading document metadata or visual line attributes
-            # Using Image details and binarized line projection
-            with Image.open(image_path) as img:
-                w, h = img.size
-                im_gray = img.convert('L')
-                
-                # Check for standard receipt patterns / text boxes by scanning bounding boxes of dark pixels
-                # Find dark pixel density in lower third of image where totals usually reside
-                pixels = im_gray.load()
-
-            # Deterministic document image reader fallback mapping image file properties dynamically
-            # If no VLM or raw text chunk match found, extract based on visual content properties
-            return None
-
+            byte_text = "\n".join([c.decode('latin-1', errors='ignore') for c in text_chunks])
+            byte_amt = self._parse_amount_from_ocr_text(byte_text)
+            if byte_amt is not None and byte_amt > 0.01:
+                return byte_amt
         except Exception:
-            return None
+            pass
+
+        # 2. Image Preprocessing
+        try:
+            preprocessed_img = self._preprocess_image(image_path)
+        except Exception:
+            preprocessed_img = None
+
+        ocr_text = ""
+
+        # 3. OCR Path A: pytesseract with fast availability check
+        if self._is_tesseract_available():
+            self._configure_pytesseract()
+            try:
+                import pytesseract
+                if preprocessed_img:
+                    ocr_text = pytesseract.image_to_string(preprocessed_img)
+                else:
+                    with Image.open(image_path) as img:
+                        ocr_text = pytesseract.image_to_string(img)
+            except Exception:
+                ocr_text = ""
+
+        # OCR Path B: easyocr
+        if not ocr_text or len(ocr_text.strip()) < 3:
+            try:
+                import easyocr
+                reader = easyocr.Reader(['en'], gpu=False)
+                results = reader.readtext(image_path)
+                ocr_text = "\n".join([res[1] for res in results])
+            except Exception:
+                pass
+
+        # 4. Keyword-anchored amount extraction
+        if ocr_text:
+            amt = self._parse_amount_from_ocr_text(ocr_text)
+            if amt is not None and amt > 0.01:
+                return amt
+
+        return None
 
     def extract_from_image_file(self, image_path: str) -> Optional[float]:
         """

@@ -27,7 +27,7 @@ class FinancialEvent:
     description: str
     category: str
     direction: str         # credit, debit
-    amount: float          # normalized in event currency or home currency
+    amount: Optional[float]          # normalized in event currency or home currency (None if unresolved)
     currency: str
     event_date: date
     settlement_date: date
@@ -87,7 +87,7 @@ class CandidatePlan:
     affordability_status: str                 # affordable_now, affordable_with_plan, affordable_later, not_affordable
     total_payable_amount: float
     is_safe: bool = False
-    payment_option_id: str = "999"            # tie-breaker sorting
+    payment_option_id: Optional[str] = None
 
 @dataclass
 class Recommendation:
